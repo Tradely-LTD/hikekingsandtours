@@ -2,8 +2,8 @@ export { COOKIE_NAME, ONE_YEAR_MS } from "@shared/const";
 
 // Generate login URL at runtime so redirect URI reflects the current origin.
 // Standalone deployments may omit the OAuth variables during the first deploy;
-// keep the public app renderable and use the Manus API portal as a safe fallback.
-const DEFAULT_OAUTH_PORTAL_URL = "https://api.manus.im";
+// keep the public app renderable and use the Manus application portal as a safe fallback.
+const DEFAULT_OAUTH_PORTAL_URL = "https://manus.im";
 
 export const resolveOAuthPortalUrl = (configuredPortalUrl?: string) => {
   try {
