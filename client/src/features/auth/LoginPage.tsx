@@ -55,13 +55,26 @@ export default function LoginPage() {
         const { data, error } = await supabase.auth.signUp({
           email,
           password,
-          options: { data: { full_name: fullName } },
+          options: {
+            data: { full_name: fullName },
+            // Send the confirmation link back to the site the person signed up
+            // on. Without this Supabase falls back to the project's Site URL,
+            // which points at localhost by default.
+            emailRedirectTo: `${window.location.origin}/login`,
+          },
         });
         if (error) throw error;
 
-        // With email confirmation on, Supabase returns a user but no session.
+        // With email confirmation on, Supabase returns a user but no session,
+        // so there is nothing to sign in with yet. Hand the form back in
+        // sign-in mode with the password cleared, keeping the email filled in.
         if (!data.session) {
-          setNotice("Check your email to confirm your address, then sign in.");
+          setMode("signin");
+          setPassword("");
+          setFullName("");
+          setNotice(
+            `Account created. We sent a confirmation link to ${email} — open it, then sign in below.`
+          );
           return;
         }
       } else {

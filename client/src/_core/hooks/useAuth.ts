@@ -26,6 +26,20 @@ export function useAuth(options?: UseAuthOptions) {
     },
   });
 
+  // The Supabase session can arrive after this query has already run — landing
+  // on the site from an email confirmation link, or a token refresh. Without
+  // this, the first auth.me goes out with no token and the person appears
+  // signed out despite having a valid session.
+  useEffect(() => {
+    if (!supabase) return;
+    const { data } = supabase.auth.onAuthStateChange((event) => {
+      if (event === "SIGNED_IN" || event === "TOKEN_REFRESHED" || event === "SIGNED_OUT") {
+        void utils.auth.me.invalidate();
+      }
+    });
+    return () => data.subscription.unsubscribe();
+  }, [utils]);
+
   const logout = useCallback(async () => {
     try {
       // Discards the Supabase access token this API authenticates with.
