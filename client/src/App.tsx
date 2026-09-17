@@ -32,6 +32,7 @@ import { ThemeProvider } from "./contexts/ThemeContext";
 
 // ── Feature modules (canonical source of truth) ──────────────────────────────
 import LandingPage from "./features/landing/LandingPage";
+import LoginPage from "./features/auth/LoginPage";
 import HikesPage from "./features/hikes/HikesPage";
 import MembershipPage from "./features/membership/MembershipPage";
 import StorePage from "./features/store/StorePage";
@@ -55,6 +56,7 @@ function Router() {
     <Switch>
       {/* ── Public routes ──────────────────────────────────────────────── */}
       <Route path="/" component={LandingPage} />
+      <Route path="/login" component={LoginPage} />
       <Route path="/hikes" component={HikesPage} />
       <Route path="/membership" component={MembershipPage} />
       <Route path="/store" component={StorePage} />

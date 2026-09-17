@@ -1,36 +1,13 @@
 export { COOKIE_NAME, ONE_YEAR_MS } from "@shared/const";
 
-// Generate login URL at runtime so redirect URI reflects the current origin.
-// Standalone deployments may omit the OAuth variables during the first deploy;
-// keep the public app renderable and use the Manus application portal as a safe fallback.
-const DEFAULT_OAUTH_PORTAL_URL = "https://manus.im";
+/** In-app sign-in route. */
+export const LOGIN_PATH = "/login";
 
-export const resolveOAuthPortalUrl = (configuredPortalUrl?: string) => {
-  try {
-    return new URL(
-      "/app-auth",
-      configuredPortalUrl?.trim() || DEFAULT_OAUTH_PORTAL_URL
-    ).toString();
-  } catch {
-    return new URL("/app-auth", DEFAULT_OAUTH_PORTAL_URL).toString();
-  }
-};
-
-export const getLoginUrl = () => {
-  const appId = import.meta.env.VITE_APP_ID?.trim() ?? "";
-  const apiBaseUrl = (
-    import.meta.env.VITE_API_BASE_URL || window.location.origin
-  ).replace(/\/$/, "");
-  const redirectUri = `${apiBaseUrl}/api/oauth/callback`;
-  const state = btoa(redirectUri);
-  const url = new URL(
-    resolveOAuthPortalUrl(import.meta.env.VITE_OAUTH_PORTAL_URL)
-  );
-
-  url.searchParams.set("appId", appId);
-  url.searchParams.set("redirectUri", redirectUri);
-  url.searchParams.set("state", state);
-  url.searchParams.set("type", "signIn");
-
-  return url.toString();
-};
+/**
+ * Where to send someone who needs to sign in.
+ *
+ * Authentication is Supabase Auth, served by our own /login page, so this is a
+ * local path rather than a third-party redirect. Kept as a function because the
+ * call sites across the app already use it this way.
+ */
+export const getLoginUrl = () => LOGIN_PATH;

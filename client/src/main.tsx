@@ -6,6 +6,7 @@ import { createRoot } from "react-dom/client";
 import superjson from "superjson";
 import App from "./App";
 import { getLoginUrl } from "./const";
+import { getAccessToken } from "@/lib/supabase";
 import "./index.css";
 
 const queryClient = new QueryClient();
@@ -44,11 +45,11 @@ const trpcClient = trpc.createClient({
     httpBatchLink({
       url: `${apiBaseUrl}/api/trpc`,
       transformer: superjson,
-      fetch(input, init) {
-        return globalThis.fetch(input, {
-          ...(init ?? {}),
-          credentials: "include",
-        });
+      // The API authenticates with the Supabase access token, not a cookie.
+      // getAccessToken() refreshes it when expired.
+      async headers() {
+        const token = await getAccessToken();
+        return token ? { Authorization: `Bearer ${token}` } : {};
       },
     }),
   ],

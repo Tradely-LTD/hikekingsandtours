@@ -12,6 +12,9 @@ export default defineConfig({
     },
   },
   root: path.resolve(import.meta.dirname, "client"),
+  // Load .env from the project root (where README and .env.example live),
+  // not from `root` (client/), which is Vite's default envDir.
+  envDir: import.meta.dirname,
   publicDir: path.resolve(import.meta.dirname, "client", "public"),
   build: {
     outDir: path.resolve(import.meta.dirname, "dist"),
