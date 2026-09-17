@@ -3,7 +3,7 @@ import { useLocation } from "wouter";
 import { Mountain, Mail, Lock, User as UserIcon, Loader2, AlertCircle, CheckCircle2 } from "lucide-react";
 import Navbar from "@/components/Navbar";
 import Footer from "@/components/Footer";
-import { supabase, isSupabaseConfigured } from "@/lib/supabase";
+import { supabase, isSupabaseConfigured, getEnabledSocialProviders } from "@/lib/supabase";
 import { useAuth } from "@/_core/hooks/useAuth";
 
 type Mode = "signin" | "signup";
@@ -18,11 +18,23 @@ export default function LoginPage() {
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const [notice, setNotice] = useState<string | null>(null);
+  const [socialProviders, setSocialProviders] = useState<string[]>([]);
 
   // Already signed in (or just finished signing in) — nothing to do here.
   useEffect(() => {
     if (isAuthenticated) navigate("/dashboard");
   }, [isAuthenticated, navigate]);
+
+  // Only offer social buttons the project has actually enabled.
+  useEffect(() => {
+    let active = true;
+    getEnabledSocialProviders().then((providers) => {
+      if (active) setSocialProviders(providers);
+    });
+    return () => {
+      active = false;
+    };
+  }, []);
 
   const switchMode = (next: Mode) => {
     setMode(next);
@@ -188,15 +200,19 @@ export default function LoginPage() {
                 </button>
               </form>
 
-              <div className="flex items-center gap-3 my-5">
-                <span className="h-px flex-1 bg-white/10" />
-                <span className="text-xs uppercase tracking-wider text-muted-foreground">or</span>
-                <span className="h-px flex-1 bg-white/10" />
-              </div>
+              {socialProviders.includes("google") && (
+                <>
+                  <div className="flex items-center gap-3 my-5">
+                    <span className="h-px flex-1 bg-white/10" />
+                    <span className="text-xs uppercase tracking-wider text-muted-foreground">or</span>
+                    <span className="h-px flex-1 bg-white/10" />
+                  </div>
 
-              <button type="button" onClick={handleGoogle} className="btn-outline-gold w-full justify-center">
-                Continue with Google
-              </button>
+                  <button type="button" onClick={handleGoogle} className="btn-outline-gold w-full justify-center">
+                    Continue with Google
+                  </button>
+                </>
+              )}
 
               <p className="text-center text-sm text-muted-foreground mt-6">
                 {mode === "signin" ? "New to Hike Kings?" : "Already have an account?"}{" "}

@@ -42,3 +42,26 @@ export async function getAccessToken(): Promise<string | null> {
   const { data } = await supabase.auth.getSession();
   return data.session?.access_token ?? null;
 }
+
+/**
+ * Social providers actually turned on for this project.
+ *
+ * Read at runtime so the sign-in page only offers a provider that will work —
+ * showing a button for a disabled provider just produces an error. Enabling one
+ * in the Supabase dashboard makes it appear here with no code change.
+ */
+export async function getEnabledSocialProviders(): Promise<string[]> {
+  if (!isSupabaseConfigured) return [];
+  try {
+    const res = await fetch(`${supabaseUrl}/auth/v1/settings`, {
+      headers: { apikey: supabaseAnonKey },
+    });
+    if (!res.ok) return [];
+    const settings = (await res.json()) as { external?: Record<string, boolean> };
+    return Object.entries(settings.external ?? {})
+      .filter(([provider, enabled]) => enabled && provider !== "email" && provider !== "phone")
+      .map(([provider]) => provider);
+  } catch {
+    return [];
+  }
+}
