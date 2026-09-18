@@ -52,6 +52,12 @@ function CreateEventModal({ onClose }: { onClose: () => void }) {
     theme: "",
     difficulty: "moderate" as "easy" | "moderate" | "challenging" | "extreme",
     location: "", price: "", maxParticipants: 50, eventDate: "", featured: false,
+    // Fields the public hikes page renders. Without these an event shows a
+    // placeholder image, no duration, and empty "What's Included"/"What to Bring".
+    imageUrl: "", meetingPoint: "", duration: "",
+    memberPrice: "", vipPrice: "",
+    includes: "", requirements: "",
+    status: "draft" as "draft" | "published",
   });
   const createEvent = trpc.admin.createEvent.useMutation({
     onSuccess: () => { toast.success("Event created successfully!"); utils.admin.events.invalidate(); onClose(); },
@@ -59,10 +65,28 @@ function CreateEventModal({ onClose }: { onClose: () => void }) {
   });
   const set = (k: string, v: unknown) => setForm((f) => ({ ...f, [k]: v }));
   const slugify = (s: string) => s.toLowerCase().replace(/[^a-z0-9]+/g, "-").replace(/(^-|-$)/g, "");
+  /** "Guide, Water, Lunch" -> ["Guide","Water","Lunch"]; blank -> omitted entirely. */
+  const toList = (value: string) => {
+    const items = value.split(",").map((s) => s.trim()).filter(Boolean);
+    return items.length > 0 ? items : undefined;
+  };
   const handleSubmit = (e: React.FormEvent) => {
     e.preventDefault();
     if (!form.eventDate) { toast.error("Please select an event date"); return; }
-    createEvent.mutate({ ...form, eventDate: new Date(form.eventDate) });
+    const { imageUrl, meetingPoint, duration, memberPrice, vipPrice, includes, requirements, ...rest } = form;
+    // Optional fields are spread in only when set — the procedure rejects an
+    // empty string where it expects a URL, and treats absent as "not provided".
+    createEvent.mutate({
+      ...rest,
+      eventDate: new Date(form.eventDate),
+      ...(imageUrl.trim() ? { imageUrl: imageUrl.trim() } : {}),
+      ...(meetingPoint.trim() ? { meetingPoint: meetingPoint.trim() } : {}),
+      ...(duration.trim() ? { duration: duration.trim() } : {}),
+      ...(memberPrice.trim() ? { memberPrice: memberPrice.trim() } : {}),
+      ...(vipPrice.trim() ? { vipPrice: vipPrice.trim() } : {}),
+      ...(toList(includes) ? { includes: toList(includes) } : {}),
+      ...(toList(requirements) ? { requirements: toList(requirements) } : {}),
+    });
   };
   return (
     <div className="fixed inset-0 z-50 flex items-center justify-center p-4 bg-black/70 backdrop-blur-sm">
@@ -132,6 +156,57 @@ function CreateEventModal({ onClose }: { onClose: () => void }) {
               <textarea rows={3} value={form.description} onChange={(e) => set("description", e.target.value)}
                 placeholder="Detailed event description..."
                 className="w-full px-4 py-2.5 rounded-xl bg-[var(--muted)] border border-[var(--border)] text-white placeholder-[oklch(0.45_0.02_240)] focus:outline-none focus:border-[var(--gold)] transition-colors text-sm resize-none" />
+            </div>
+            <div className="col-span-1 sm:col-span-2">
+              <label className="block text-xs font-semibold text-[oklch(0.62_0.02_240)] uppercase tracking-wider mb-1.5">Image URL</label>
+              <input type="url" value={form.imageUrl} onChange={(e) => set("imageUrl", e.target.value)}
+                placeholder="https://… — leave blank to use the default hike image"
+                className="w-full px-4 py-2.5 rounded-xl bg-[var(--muted)] border border-[var(--border)] text-white placeholder-[oklch(0.45_0.02_240)] focus:outline-none focus:border-[var(--gold)] transition-colors text-sm" />
+              {form.imageUrl.trim() && (
+                <img src={form.imageUrl} alt="" onError={(e) => { (e.currentTarget as HTMLImageElement).style.display = "none"; }}
+                  onLoad={(e) => { (e.currentTarget as HTMLImageElement).style.display = "block"; }}
+                  className="mt-2 w-full h-28 object-cover rounded-lg border border-white/10" />
+              )}
+            </div>
+            <div>
+              <label className="block text-xs font-semibold text-[oklch(0.62_0.02_240)] uppercase tracking-wider mb-1.5">Member Price (₦)</label>
+              <input value={form.memberPrice} onChange={(e) => set("memberPrice", e.target.value)} placeholder="e.g. 4500"
+                className="w-full px-4 py-2.5 rounded-xl bg-[var(--muted)] border border-[var(--border)] text-white placeholder-[oklch(0.45_0.02_240)] focus:outline-none focus:border-[var(--gold)] transition-colors text-sm" />
+            </div>
+            <div>
+              <label className="block text-xs font-semibold text-[oklch(0.62_0.02_240)] uppercase tracking-wider mb-1.5">VIP Price (₦)</label>
+              <input value={form.vipPrice} onChange={(e) => set("vipPrice", e.target.value)} placeholder="e.g. 4000"
+                className="w-full px-4 py-2.5 rounded-xl bg-[var(--muted)] border border-[var(--border)] text-white placeholder-[oklch(0.45_0.02_240)] focus:outline-none focus:border-[var(--gold)] transition-colors text-sm" />
+            </div>
+            <div>
+              <label className="block text-xs font-semibold text-[oklch(0.62_0.02_240)] uppercase tracking-wider mb-1.5">Duration</label>
+              <input value={form.duration} onChange={(e) => set("duration", e.target.value)} placeholder="e.g. 6 hours"
+                className="w-full px-4 py-2.5 rounded-xl bg-[var(--muted)] border border-[var(--border)] text-white placeholder-[oklch(0.45_0.02_240)] focus:outline-none focus:border-[var(--gold)] transition-colors text-sm" />
+            </div>
+            <div>
+              <label className="block text-xs font-semibold text-[oklch(0.62_0.02_240)] uppercase tracking-wider mb-1.5">Meeting Point</label>
+              <input value={form.meetingPoint} onChange={(e) => set("meetingPoint", e.target.value)} placeholder="e.g. Jos — Rayfield junction"
+                className="w-full px-4 py-2.5 rounded-xl bg-[var(--muted)] border border-[var(--border)] text-white placeholder-[oklch(0.45_0.02_240)] focus:outline-none focus:border-[var(--gold)] transition-colors text-sm" />
+            </div>
+            <div className="col-span-1 sm:col-span-2">
+              <label className="block text-xs font-semibold text-[oklch(0.62_0.02_240)] uppercase tracking-wider mb-1.5">What&apos;s Included</label>
+              <input value={form.includes} onChange={(e) => set("includes", e.target.value)}
+                placeholder="Comma separated — e.g. Certified guide, Transport, Packed lunch"
+                className="w-full px-4 py-2.5 rounded-xl bg-[var(--muted)] border border-[var(--border)] text-white placeholder-[oklch(0.45_0.02_240)] focus:outline-none focus:border-[var(--gold)] transition-colors text-sm" />
+            </div>
+            <div className="col-span-1 sm:col-span-2">
+              <label className="block text-xs font-semibold text-[oklch(0.62_0.02_240)] uppercase tracking-wider mb-1.5">What to Bring</label>
+              <input value={form.requirements} onChange={(e) => set("requirements", e.target.value)}
+                placeholder="Comma separated — e.g. Hiking boots, 2L water, Rain jacket"
+                className="w-full px-4 py-2.5 rounded-xl bg-[var(--muted)] border border-[var(--border)] text-white placeholder-[oklch(0.45_0.02_240)] focus:outline-none focus:border-[var(--gold)] transition-colors text-sm" />
+            </div>
+            <div className="col-span-1 sm:col-span-2">
+              <label className="block text-xs font-semibold text-[oklch(0.62_0.02_240)] uppercase tracking-wider mb-1.5">Status</label>
+              <select value={form.status} onChange={(e) => set("status", e.target.value)}
+                className="w-full px-4 py-2.5 rounded-xl bg-[var(--muted)] border border-[var(--border)] text-white focus:outline-none focus:border-[var(--gold)] transition-colors text-sm">
+                <option value="draft">Draft — not visible on the site</option>
+                <option value="published">Published — live on the hikes page</option>
+              </select>
             </div>
             <div className="col-span-1 sm:col-span-2 flex items-center gap-3">
               <input type="checkbox" id="featured" checked={form.featured} onChange={(e) => set("featured", e.target.checked)} className="w-4 h-4 accent-[var(--gold)]" />

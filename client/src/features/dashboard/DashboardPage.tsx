@@ -291,7 +291,7 @@ function UpgradeModal({
           })}
         </div>
         <p className="text-xs text-[oklch(0.45_0.02_240)] text-center mt-5">
-          Payment processed via Paystack. Contact us at info@hikekings.ng for corporate billing.
+          Payment processed via Paystack. Contact us at info@hikekingsandtours.com for corporate billing.
         </p>
       </div>
     </div>
