@@ -52,6 +52,12 @@ function CreateEventModal({ onClose }: { onClose: () => void }) {
     theme: "",
     difficulty: "moderate" as "easy" | "moderate" | "challenging" | "extreme",
     location: "", price: "", maxParticipants: 50, eventDate: "", featured: false,
+    // Fields the public hikes page renders. Without these an event shows a
+    // placeholder image, no duration, and empty "What's Included"/"What to Bring".
+    imageUrl: "", meetingPoint: "", duration: "",
+    memberPrice: "", vipPrice: "",
+    includes: "", requirements: "",
+    status: "draft" as "draft" | "published",
   });
   const createEvent = trpc.admin.createEvent.useMutation({
     onSuccess: () => { toast.success("Event created successfully!"); utils.admin.events.invalidate(); onClose(); },
@@ -59,10 +65,28 @@ function CreateEventModal({ onClose }: { onClose: () => void }) {
   });
   const set = (k: string, v: unknown) => setForm((f) => ({ ...f, [k]: v }));
   const slugify = (s: string) => s.toLowerCase().replace(/[^a-z0-9]+/g, "-").replace(/(^-|-$)/g, "");
+  /** "Guide, Water, Lunch" -> ["Guide","Water","Lunch"]; blank -> omitted entirely. */
+  const toList = (value: string) => {
+    const items = value.split(",").map((s) => s.trim()).filter(Boolean);
+    return items.length > 0 ? items : undefined;
+  };
   const handleSubmit = (e: React.FormEvent) => {
     e.preventDefault();
     if (!form.eventDate) { toast.error("Please select an event date"); return; }
-    createEvent.mutate({ ...form, eventDate: new Date(form.eventDate) });
+    const { imageUrl, meetingPoint, duration, memberPrice, vipPrice, includes, requirements, ...rest } = form;
+    // Optional fields are spread in only when set — the procedure rejects an
+    // empty string where it expects a URL, and treats absent as "not provided".
+    createEvent.mutate({
+      ...rest,
+      eventDate: new Date(form.eventDate),
+      ...(imageUrl.trim() ? { imageUrl: imageUrl.trim() } : {}),
+      ...(meetingPoint.trim() ? { meetingPoint: meetingPoint.trim() } : {}),
+      ...(duration.trim() ? { duration: duration.trim() } : {}),
+      ...(memberPrice.trim() ? { memberPrice: memberPrice.trim() } : {}),
+      ...(vipPrice.trim() ? { vipPrice: vipPrice.trim() } : {}),
+      ...(toList(includes) ? { includes: toList(includes) } : {}),
+      ...(toList(requirements) ? { requirements: toList(requirements) } : {}),
+    });
   };
   return (
     <div className="fixed inset-0 z-50 flex items-center justify-center p-4 bg-black/70 backdrop-blur-sm">
@@ -133,6 +157,57 @@ function CreateEventModal({ onClose }: { onClose: () => void }) {
                 placeholder="Detailed event description..."
                 className="w-full px-4 py-2.5 rounded-xl bg-[var(--muted)] border border-[var(--border)] text-white placeholder-[oklch(0.45_0.02_240)] focus:outline-none focus:border-[var(--gold)] transition-colors text-sm resize-none" />
             </div>
+            <div className="col-span-1 sm:col-span-2">
+              <label className="block text-xs font-semibold text-[oklch(0.62_0.02_240)] uppercase tracking-wider mb-1.5">Image URL</label>
+              <input type="url" value={form.imageUrl} onChange={(e) => set("imageUrl", e.target.value)}
+                placeholder="https://… — leave blank to use the default hike image"
+                className="w-full px-4 py-2.5 rounded-xl bg-[var(--muted)] border border-[var(--border)] text-white placeholder-[oklch(0.45_0.02_240)] focus:outline-none focus:border-[var(--gold)] transition-colors text-sm" />
+              {form.imageUrl.trim() && (
+                <img src={form.imageUrl} alt="" onError={(e) => { (e.currentTarget as HTMLImageElement).style.display = "none"; }}
+                  onLoad={(e) => { (e.currentTarget as HTMLImageElement).style.display = "block"; }}
+                  className="mt-2 w-full h-28 object-cover rounded-lg border border-white/10" />
+              )}
+            </div>
+            <div>
+              <label className="block text-xs font-semibold text-[oklch(0.62_0.02_240)] uppercase tracking-wider mb-1.5">Member Price (₦)</label>
+              <input value={form.memberPrice} onChange={(e) => set("memberPrice", e.target.value)} placeholder="e.g. 4500"
+                className="w-full px-4 py-2.5 rounded-xl bg-[var(--muted)] border border-[var(--border)] text-white placeholder-[oklch(0.45_0.02_240)] focus:outline-none focus:border-[var(--gold)] transition-colors text-sm" />
+            </div>
+            <div>
+              <label className="block text-xs font-semibold text-[oklch(0.62_0.02_240)] uppercase tracking-wider mb-1.5">VIP Price (₦)</label>
+              <input value={form.vipPrice} onChange={(e) => set("vipPrice", e.target.value)} placeholder="e.g. 4000"
+                className="w-full px-4 py-2.5 rounded-xl bg-[var(--muted)] border border-[var(--border)] text-white placeholder-[oklch(0.45_0.02_240)] focus:outline-none focus:border-[var(--gold)] transition-colors text-sm" />
+            </div>
+            <div>
+              <label className="block text-xs font-semibold text-[oklch(0.62_0.02_240)] uppercase tracking-wider mb-1.5">Duration</label>
+              <input value={form.duration} onChange={(e) => set("duration", e.target.value)} placeholder="e.g. 6 hours"
+                className="w-full px-4 py-2.5 rounded-xl bg-[var(--muted)] border border-[var(--border)] text-white placeholder-[oklch(0.45_0.02_240)] focus:outline-none focus:border-[var(--gold)] transition-colors text-sm" />
+            </div>
+            <div>
+              <label className="block text-xs font-semibold text-[oklch(0.62_0.02_240)] uppercase tracking-wider mb-1.5">Meeting Point</label>
+              <input value={form.meetingPoint} onChange={(e) => set("meetingPoint", e.target.value)} placeholder="e.g. Jos — Rayfield junction"
+                className="w-full px-4 py-2.5 rounded-xl bg-[var(--muted)] border border-[var(--border)] text-white placeholder-[oklch(0.45_0.02_240)] focus:outline-none focus:border-[var(--gold)] transition-colors text-sm" />
+            </div>
+            <div className="col-span-1 sm:col-span-2">
+              <label className="block text-xs font-semibold text-[oklch(0.62_0.02_240)] uppercase tracking-wider mb-1.5">What&apos;s Included</label>
+              <input value={form.includes} onChange={(e) => set("includes", e.target.value)}
+                placeholder="Comma separated — e.g. Certified guide, Transport, Packed lunch"
+                className="w-full px-4 py-2.5 rounded-xl bg-[var(--muted)] border border-[var(--border)] text-white placeholder-[oklch(0.45_0.02_240)] focus:outline-none focus:border-[var(--gold)] transition-colors text-sm" />
+            </div>
+            <div className="col-span-1 sm:col-span-2">
+              <label className="block text-xs font-semibold text-[oklch(0.62_0.02_240)] uppercase tracking-wider mb-1.5">What to Bring</label>
+              <input value={form.requirements} onChange={(e) => set("requirements", e.target.value)}
+                placeholder="Comma separated — e.g. Hiking boots, 2L water, Rain jacket"
+                className="w-full px-4 py-2.5 rounded-xl bg-[var(--muted)] border border-[var(--border)] text-white placeholder-[oklch(0.45_0.02_240)] focus:outline-none focus:border-[var(--gold)] transition-colors text-sm" />
+            </div>
+            <div className="col-span-1 sm:col-span-2">
+              <label className="block text-xs font-semibold text-[oklch(0.62_0.02_240)] uppercase tracking-wider mb-1.5">Status</label>
+              <select value={form.status} onChange={(e) => set("status", e.target.value)}
+                className="w-full px-4 py-2.5 rounded-xl bg-[var(--muted)] border border-[var(--border)] text-white focus:outline-none focus:border-[var(--gold)] transition-colors text-sm">
+                <option value="draft">Draft — not visible on the site</option>
+                <option value="published">Published — live on the hikes page</option>
+              </select>
+            </div>
             <div className="col-span-1 sm:col-span-2 flex items-center gap-3">
               <input type="checkbox" id="featured" checked={form.featured} onChange={(e) => set("featured", e.target.checked)} className="w-4 h-4 accent-[var(--gold)]" />
               <label htmlFor="featured" className="text-sm text-[oklch(0.75_0.02_240)] cursor-pointer">Feature this event on the homepage</label>
@@ -154,46 +229,192 @@ function CreateEventModal({ onClose }: { onClose: () => void }) {
 // ── Edit Event Modal ───────────────────────────────────────────────────────────
 function EditEventModal({ event, onClose }: { event: Record<string, unknown>; onClose: () => void }) {
   const utils = trpc.useUtils();
-  const [title, setTitle] = useState(String(event.title ?? ""));
-  const [status, setStatus] = useState(String(event.status ?? "published"));
-  const [featured, setFeatured] = useState(Boolean(event.featured));
+
+  const str = (v: unknown) => (v === null || v === undefined ? "" : String(v));
+  /** jsonb arrays come back as string[] | null; render them as an editable comma list. */
+  const list = (v: unknown) => (Array.isArray(v) ? v.filter((x): x is string => typeof x === "string").join(", ") : "");
+  /** A timestamp arrives as a Date via superjson; datetime-local needs local "YYYY-MM-DDTHH:mm". */
+  const toLocalInput = (v: unknown) => {
+    if (!v) return "";
+    const d = v instanceof Date ? v : new Date(String(v));
+    if (Number.isNaN(d.getTime())) return "";
+    const pad = (n: number) => String(n).padStart(2, "0");
+    return `${d.getFullYear()}-${pad(d.getMonth() + 1)}-${pad(d.getDate())}T${pad(d.getHours())}:${pad(d.getMinutes())}`;
+  };
+
+  const [form, setForm] = useState({
+    title: str(event.title),
+    slug: str(event.slug),
+    location: str(event.location),
+    category: str(event.category) || "standard",
+    difficulty: str(event.difficulty) || "moderate",
+    theme: str(event.theme),
+    price: str(event.price),
+    memberPrice: str(event.memberPrice),
+    vipPrice: str(event.vipPrice),
+    maxParticipants: Number(event.maxParticipants ?? 50),
+    eventDate: toLocalInput(event.eventDate),
+    imageUrl: str(event.imageUrl),
+    meetingPoint: str(event.meetingPoint),
+    duration: str(event.duration),
+    shortDescription: str(event.shortDescription),
+    description: str(event.description),
+    includes: list(event.includes),
+    requirements: list(event.requirements),
+    status: str(event.status) || "published",
+    featured: Boolean(event.featured),
+  });
+  const set = (k: string, v: unknown) => setForm((f) => ({ ...f, [k]: v }));
+
   const updateEvent = trpc.admin.updateEvent.useMutation({
-    onSuccess: () => { toast.success("Event updated!"); utils.admin.events.invalidate(); onClose(); },
+    onSuccess: () => { toast.success("Event updated!"); utils.admin.events.invalidate(); utils.hikes.list.invalidate(); utils.hikes.featured.invalidate(); onClose(); },
     onError: (e) => toast.error(e.message),
   });
+
+  const handleSave = () => {
+    const text = (v: string) => (v.trim() ? v.trim() : undefined);
+    const toList = (v: string) => {
+      const items = v.split(",").map((s) => s.trim()).filter(Boolean);
+      return items.length > 0 ? items : undefined;
+    };
+    // Every field is optional on update; only send what has a value so a blank
+    // input never overwrites stored content with an empty string.
+    updateEvent.mutate({
+      id: Number(event.id),
+      title: form.title,
+      status: form.status as "draft" | "published" | "cancelled" | "completed",
+      featured: form.featured,
+      maxParticipants: Number(form.maxParticipants) || undefined,
+      ...(form.eventDate ? { eventDate: new Date(form.eventDate) } : {}),
+      ...(text(form.slug) ? { slug: text(form.slug) } : {}),
+      ...(text(form.location) ? { location: text(form.location) } : {}),
+      ...(text(form.category) ? { category: form.category as "standard" } : {}),
+      ...(text(form.difficulty) ? { difficulty: form.difficulty as "moderate" } : {}),
+      ...(text(form.theme) ? { theme: text(form.theme) } : {}),
+      ...(text(form.price) ? { price: text(form.price) } : {}),
+      ...(text(form.memberPrice) ? { memberPrice: text(form.memberPrice) } : {}),
+      ...(text(form.vipPrice) ? { vipPrice: text(form.vipPrice) } : {}),
+      ...(text(form.imageUrl) ? { imageUrl: text(form.imageUrl) } : {}),
+      ...(text(form.meetingPoint) ? { meetingPoint: text(form.meetingPoint) } : {}),
+      ...(text(form.duration) ? { duration: text(form.duration) } : {}),
+      ...(text(form.shortDescription) ? { shortDescription: text(form.shortDescription) } : {}),
+      ...(text(form.description) ? { description: text(form.description) } : {}),
+      ...(toList(form.includes) ? { includes: toList(form.includes) } : {}),
+      ...(toList(form.requirements) ? { requirements: toList(form.requirements) } : {}),
+    });
+  };
+
+  const field = "w-full px-4 py-2.5 rounded-xl bg-[var(--muted)] border border-[var(--border)] text-white placeholder-[oklch(0.45_0.02_240)] focus:outline-none focus:border-[var(--gold)] transition-colors text-sm";
+  const lbl = "block text-xs font-semibold text-[oklch(0.62_0.02_240)] uppercase tracking-wider mb-1.5";
+
   return (
     <div className="fixed inset-0 z-50 flex items-center justify-center p-4 bg-black/70 backdrop-blur-sm">
-      <div className="bg-[oklch(0.11_0.015_240)] border border-white/10 rounded-2xl w-full max-w-md">
-        <div className="flex items-center justify-between p-6 border-b border-white/10">
+      <div className="bg-[oklch(0.11_0.015_240)] border border-white/10 rounded-2xl w-full max-w-sm sm:max-w-md md:max-w-2xl max-h-[90vh] overflow-y-auto">
+        <div className="flex items-center justify-between p-6 border-b border-white/10 sticky top-0 bg-[oklch(0.11_0.015_240)] z-10">
           <h2 className="font-display text-xl font-bold text-white">Edit Event</h2>
           <button onClick={onClose} className="p-2 rounded-xl hover:bg-white/5 text-[oklch(0.55_0.02_240)] hover:text-white transition-colors"><X className="w-5 h-5" /></button>
         </div>
         <div className="p-6 space-y-4">
-          <div>
-            <label className="block text-xs font-semibold text-[oklch(0.62_0.02_240)] uppercase tracking-wider mb-1.5">Title</label>
-            <input value={title} onChange={(e) => setTitle(e.target.value)}
-              className="w-full px-4 py-2.5 rounded-xl bg-[var(--muted)] border border-[var(--border)] text-white focus:outline-none focus:border-[var(--gold)] transition-colors text-sm" />
-          </div>
-          <div>
-            <label className="block text-xs font-semibold text-[oklch(0.62_0.02_240)] uppercase tracking-wider mb-1.5">Status</label>
-            <select value={status} onChange={(e) => setStatus(e.target.value)}
-              className="w-full px-4 py-2.5 rounded-xl bg-[var(--muted)] border border-[var(--border)] text-white focus:outline-none focus:border-[var(--gold)] transition-colors text-sm">
-              <option value="draft">Draft</option>
-              <option value="published">Published</option>
-              <option value="cancelled">Cancelled</option>
-              <option value="completed">Completed</option>
-            </select>
-          </div>
-          <div className="flex items-center gap-3">
-            <input type="checkbox" id="edit-featured" checked={featured} onChange={(e) => setFeatured(e.target.checked)} className="w-4 h-4 accent-[var(--gold)]" />
-            <label htmlFor="edit-featured" className="text-sm text-[oklch(0.75_0.02_240)] cursor-pointer">Featured on homepage</label>
+          <div className="grid grid-cols-1 sm:grid-cols-2 gap-4">
+            <div>
+              <label className={lbl}>Title</label>
+              <input value={form.title} onChange={(e) => set("title", e.target.value)} className={field} />
+            </div>
+            <div>
+              <label className={lbl}>Location</label>
+              <input value={form.location} onChange={(e) => set("location", e.target.value)} placeholder="e.g. Idanre, Ondo State" className={field} />
+            </div>
+            <div>
+              <label className={lbl}>Category</label>
+              <select value={form.category} onChange={(e) => set("category", e.target.value)} className={field}>
+                {["standard","premium","camping","photography","cultural","corporate","vip_exclusive"].map(c => <option key={c} value={c}>{c}</option>)}
+              </select>
+            </div>
+            <div>
+              <label className={lbl}>Difficulty</label>
+              <select value={form.difficulty} onChange={(e) => set("difficulty", e.target.value)} className={field}>
+                {["easy","moderate","challenging","extreme"].map(d => <option key={d} value={d}>{d}</option>)}
+              </select>
+            </div>
+            <div>
+              <label className={lbl}>Price (₦)</label>
+              <input value={form.price} onChange={(e) => set("price", e.target.value)} placeholder="e.g. 45000" className={field} />
+            </div>
+            <div>
+              <label className={lbl}>Max Participants</label>
+              <input type="number" min={1} value={form.maxParticipants} onChange={(e) => set("maxParticipants", Number(e.target.value))} className={field} />
+            </div>
+            <div>
+              <label className={lbl}>Member Price (₦)</label>
+              <input value={form.memberPrice} onChange={(e) => set("memberPrice", e.target.value)} placeholder="e.g. 40500" className={field} />
+            </div>
+            <div>
+              <label className={lbl}>VIP Price (₦)</label>
+              <input value={form.vipPrice} onChange={(e) => set("vipPrice", e.target.value)} placeholder="e.g. 38000" className={field} />
+            </div>
+            <div>
+              <label className={lbl}>Event Date &amp; Time</label>
+              <input type="datetime-local" value={form.eventDate} onChange={(e) => set("eventDate", e.target.value)} className={field} />
+            </div>
+            <div>
+              <label className={lbl}>Duration</label>
+              <input value={form.duration} onChange={(e) => set("duration", e.target.value)} placeholder="e.g. 8 hours" className={field} />
+            </div>
+            <div>
+              <label className={lbl}>Theme</label>
+              <input value={form.theme} onChange={(e) => set("theme", e.target.value)} placeholder="e.g. Sunrise" className={field} />
+            </div>
+            <div>
+              <label className={lbl}>Meeting Point</label>
+              <input value={form.meetingPoint} onChange={(e) => set("meetingPoint", e.target.value)} placeholder="e.g. Akure city centre" className={field} />
+            </div>
+            <div className="col-span-1 sm:col-span-2">
+              <label className={lbl}>Image URL</label>
+              <input type="url" value={form.imageUrl} onChange={(e) => set("imageUrl", e.target.value)} placeholder="https://…" className={field} />
+              {form.imageUrl.trim() && (
+                <img src={form.imageUrl} alt="" onError={(e) => { (e.currentTarget as HTMLImageElement).style.display = "none"; }}
+                  onLoad={(e) => { (e.currentTarget as HTMLImageElement).style.display = "block"; }}
+                  className="mt-2 w-full h-28 object-cover rounded-lg border border-white/10" />
+              )}
+            </div>
+            <div className="col-span-1 sm:col-span-2">
+              <label className={lbl}>Slug</label>
+              <input value={form.slug} onChange={(e) => set("slug", e.target.value)} placeholder="url-friendly-name" className={field} />
+            </div>
+            <div className="col-span-1 sm:col-span-2">
+              <label className={lbl}>Short Description</label>
+              <input value={form.shortDescription} onChange={(e) => set("shortDescription", e.target.value)} placeholder="Brief summary shown on cards" className={field} />
+            </div>
+            <div className="col-span-1 sm:col-span-2">
+              <label className={lbl}>Full Description</label>
+              <textarea rows={3} value={form.description} onChange={(e) => set("description", e.target.value)} className={`${field} resize-none`} />
+            </div>
+            <div className="col-span-1 sm:col-span-2">
+              <label className={lbl}>What&apos;s Included</label>
+              <input value={form.includes} onChange={(e) => set("includes", e.target.value)} placeholder="Comma separated — e.g. Certified guide, Transport, Lunch" className={field} />
+            </div>
+            <div className="col-span-1 sm:col-span-2">
+              <label className={lbl}>What to Bring</label>
+              <input value={form.requirements} onChange={(e) => set("requirements", e.target.value)} placeholder="Comma separated — e.g. Hiking boots, 2L water" className={field} />
+            </div>
+            <div className="col-span-1 sm:col-span-2">
+              <label className={lbl}>Status</label>
+              <select value={form.status} onChange={(e) => set("status", e.target.value)} className={field}>
+                <option value="draft">Draft — not visible on the site</option>
+                <option value="published">Published — live on the hikes page</option>
+                <option value="cancelled">Cancelled</option>
+                <option value="completed">Completed</option>
+              </select>
+            </div>
+            <div className="col-span-1 sm:col-span-2 flex items-center gap-3">
+              <input type="checkbox" id="edit-featured" checked={form.featured} onChange={(e) => set("featured", e.target.checked)} className="w-4 h-4 accent-[var(--gold)]" />
+              <label htmlFor="edit-featured" className="text-sm text-[oklch(0.75_0.02_240)] cursor-pointer">Featured on homepage</label>
+            </div>
           </div>
         </div>
-        <div className="p-6 pt-0 flex gap-3">
+        <div className="p-6 pt-0 flex gap-3 sticky bottom-0 bg-[oklch(0.11_0.015_240)]">
           <button onClick={onClose} className="flex-1 px-4 py-2.5 rounded-xl border border-white/10 text-[oklch(0.62_0.02_240)] hover:text-white transition-colors text-sm font-semibold">Cancel</button>
-          <button
-            onClick={() => updateEvent.mutate({ id: Number(event.id), title, status: status as "draft" | "published" | "cancelled" | "completed", featured })}
-            disabled={updateEvent.isPending}
+          <button onClick={handleSave} disabled={updateEvent.isPending}
             className="flex-1 btn-gold py-2.5 text-sm flex items-center justify-center gap-2">
             {updateEvent.isPending ? <Loader2 className="w-4 h-4 animate-spin" /> : <Edit className="w-4 h-4" />}
             {updateEvent.isPending ? "Saving..." : "Save Changes"}

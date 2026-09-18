@@ -5,8 +5,8 @@
   "description": "Frontend for Hike Kings & Tours 2.0",
   "type": "module",
   "scripts": {
-    "dev": "vite --host 0.0.0.0",
-    "build": "vite build",
+    "dev": "node api.js && vite --host 0.0.0.0",
+    "build": "node api.js && vite build",
     "preview": "vite preview --host 0.0.0.0",
     "check": "tsc --noEmit"
   },

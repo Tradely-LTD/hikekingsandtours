@@ -1,7 +1,8 @@
-import { useEffect, useRef, useState } from "react";
+import { useEffect, useMemo, useRef, useState } from "react";
 import { Link } from "wouter";
 import { useAuth } from "@/_core/hooks/useAuth";
 import { getLoginUrl } from "@/const";
+import { trpc } from "@/lib/trpc";
 import {
   Mountain, ArrowRight, Star, Users, Calendar, Shield, Camera, Tent,
   Globe, Award, ChevronRight, Play, CheckCircle, Zap, Crown, MapPin,
@@ -10,51 +11,108 @@ import {
 import Navbar from "@/components/Navbar";
 import Footer from "@/components/Footer";
 
-// ─── Data ────────────────────────────────────────────────────────────────────
-const FEATURED_HIKES = [
-  {
-    id: 1, title: "Waterfall Adventure", location: "Gurara Falls, Niger State",
-    price: "₦5,000", category: "Standard", difficulty: "Moderate",
-    image: "https://images.unsplash.com/photo-1551632811-561732d1e306?w=600&q=80",
-    badge: "Most Popular", badgeClass: "badge-gold",
-    includes: ["Water", "Energy Drinks", "Fruits", "Guide"],
-  },
-  {
-    id: 2, title: "Sunrise Hike", location: "Aso Rock, Abuja",
-    price: "₦5,000", category: "Standard", difficulty: "Easy",
-    image: "https://images.unsplash.com/photo-1464822759023-fed622ff2c3b?w=600&q=80",
-    badge: "Early Bird", badgeClass: "badge-green",
-    includes: ["Breakfast", "Water", "Guide", "First Aid"],
-  },
-  {
-    id: 3, title: "Night Glow Hike", location: "Zuma Rock, Niger State",
-    price: "₦7,500", category: "Premium", difficulty: "Moderate",
-    image: "https://images.unsplash.com/photo-1519681393784-d120267933ba?w=600&q=80",
-    badge: "Night Special", badgeClass: "badge-gold",
-    includes: ["Glow Sticks", "Music", "Water", "Guide"],
-  },
-  {
-    id: 4, title: "Green Heroes Hike", location: "Yankari National Park",
-    price: "₦5,000", category: "Standard", difficulty: "Easy",
-    image: "https://images.unsplash.com/photo-1441974231531-c6227db76b6e?w=600&q=80",
-    badge: "Eco Friendly", badgeClass: "badge-green",
-    includes: ["Tree Planting", "Water", "Guide", "Certificate"],
-  },
-  {
-    id: 5, title: "Obudu Mountain Resort", location: "Cross River State",
-    price: "₦35,000", category: "Premium", difficulty: "Challenging",
-    image: "https://images.unsplash.com/photo-1506905925346-21bda4d32df4?w=600&q=80",
-    badge: "Premium Trip", badgeClass: "badge-gold",
-    includes: ["Transport", "Accommodation", "Meals", "Guide"],
-  },
-  {
-    id: 6, title: "Photography Safari", location: "Kainji Lake National Park",
-    price: "₦25,000", category: "Photography", difficulty: "Easy",
-    image: "https://images.unsplash.com/photo-1500534314209-a25ddb2bd429?w=600&q=80",
-    badge: "Photo Tour", badgeClass: "badge-green",
-    includes: ["Photography Guide", "Transport", "Water", "Prints"],
-  },
-];
+// ─── Live data normalisers ─────────────────────────────────────
+
+const FALLBACK_HIKE_IMAGE =
+  "https://images.unsplash.com/photo-1551632811-561732d1e306?w=800&q=80";
+const FALLBACK_AVATAR =
+  "https://images.unsplash.com/photo-1531123897727-8f129e1688ce?w=100&q=80";
+
+interface UiFeaturedHike {
+  id: number;
+  title: string;
+  location: string;
+  price: string;
+  difficulty: string;
+  image: string;
+  badge: string;
+  badgeClass: string;
+  includes: string[];
+}
+
+const asStringArray = (value: unknown): string[] =>
+  Array.isArray(value) ? value.filter((v): v is string => typeof v === "string") : [];
+
+/**
+ * hikes.featured rows: `price` is a DECIMAL column (a string), `imageUrl` may be
+ * null, `includes` is nullable jsonb. The badge is DERIVED here, not stored.
+ */
+const normaliseFeaturedHikes = (rows: unknown[]): UiFeaturedHike[] =>
+  rows.map((raw) => {
+    const row = raw as Record<string, unknown>;
+    const price = Number(row.price) || 0;
+    const category = String(row.category ?? "standard");
+    const featured = Boolean(row.featured);
+    return {
+      id: Number(row.id),
+      title: String(row.title ?? "Untitled hike"),
+      location: String(row.location ?? ""),
+      price: `₦${price.toLocaleString("en-NG")}`,
+      difficulty: String(row.difficulty ?? "moderate"),
+      image: String(row.imageUrl || FALLBACK_HIKE_IMAGE),
+      badge: featured ? "Featured" : category,
+      badgeClass: featured ? "badge-gold" : "badge-green",
+      includes: asStringArray(row.includes),
+    };
+  });
+
+interface UiTestimonial {
+  id: number;
+  name: string;
+  title: string;
+  avatar: string;
+  text: string;
+  rating: number;
+}
+
+/**
+ * testimonials.list has no hike join and `hikeEventId` is null on every row, so
+ * no per-testimonial hike label is rendered. Inventing one would be a claim we
+ * cannot support.
+ */
+const normaliseTestimonials = (rows: unknown[]): UiTestimonial[] =>
+  rows.map((raw) => {
+    const row = raw as Record<string, unknown>;
+    const rating = Number(row.rating);
+    return {
+      id: Number(row.id),
+      name: String(row.authorName ?? "Hike Kings member"),
+      title: String(row.authorTitle ?? ""),
+      avatar: String(row.avatarUrl || FALLBACK_AVATAR),
+      text: String(row.content ?? ""),
+      rating: Number.isFinite(rating) ? Math.min(5, Math.max(0, Math.round(rating))) : 5,
+    };
+  });
+
+interface UiLandingTier {
+  id: number;
+  name: string;
+  price: string;
+  period: string;
+  popular: boolean;
+  perks: string[];
+}
+
+/** Same source of truth as MembershipPage, so the prices can never diverge. */
+const normaliseTiers = (rows: unknown[]): UiLandingTier[] =>
+  rows.map((raw) => {
+    const row = raw as Record<string, unknown>;
+    const price = Number(row.price) || 0;
+    return {
+      id: Number(row.id),
+      name: String(row.name ?? "Membership"),
+      price: `₦${price.toLocaleString("en-NG")}`,
+      period: String(row.period ?? "/year"),
+      popular: Boolean(row.popular),
+      // Six perks keeps the two landing cards visually balanced; the full list
+      // is on /membership.
+      perks: (Array.isArray(row.perks)
+        ? row.perks.filter((v): v is string => typeof v === "string")
+        : []).slice(0, 6),
+    };
+  });
+
+// ─── Static marketing copy ────────────────────────────────────
 
 const EXPERIENCES = [
   { icon: Mountain, title: "Hiking", desc: "Explore Nigeria's most breathtaking trails with expert guides.", color: "from-[oklch(0.32_0.1_160)] to-[oklch(0.22_0.08_160)]" },
@@ -70,56 +128,7 @@ const STATS = [
   { value: "4.9", label: "Average Rating" },
 ];
 
-const MEMBERSHIP_TIERS = [
-  {
-    name: "Regular", price: "₦100,000", period: "/year", popular: false,
-    color: "border-[var(--border)]",
-    perks: [
-      "50% discount on Abuja tourist trips",
-      "Priority booking for all hikes",
-      "Special members-only hike events",
-      "Community recognition badge",
-      "Access to members chat",
-      "Monthly newsletter & updates",
-    ],
-  },
-  {
-    name: "VIP", price: "₦500,000", period: "/year", popular: true,
-    color: "membership-vip",
-    perks: [
-      "Free local trip to one tourist destination",
-      "Exclusive VIP-only hike events",
-      "Access to all private events",
-      "VIP badge on profile",
-      "Free merchandise package",
-      "Dedicated concierge support",
-      "Priority emergency assistance",
-      "Bring 2 guests for free per event",
-    ],
-  },
-];
-
-const TESTIMONIALS = [
-  {
-    name: "Amaka Okonkwo", title: "VIP Member since 2023",
-    avatar: "https://images.unsplash.com/photo-1531123897727-8f129e1688ce?w=100&q=80",
-    text: "Hike Kings completely changed my weekends. The community is incredible — I've made lifelong friends on these trails. The VIP membership is absolutely worth every naira.",
-    rating: 5, hike: "Waterfall Adventure",
-  },
-  {
-    name: "Emeka Adeyemi", title: "Regular Member",
-    avatar: "https://images.unsplash.com/photo-1507003211169-0a1dd7228f2d?w=100&q=80",
-    text: "I was skeptical at first, but after my first hike I was hooked. The guides are professional, safety is top priority, and the experiences are genuinely world-class.",
-    rating: 5, hike: "Sunrise Hike",
-  },
-  {
-    name: "Fatima Bello", title: "Corporate Client",
-    avatar: "https://images.unsplash.com/photo-1494790108755-2616b612b47c?w=100&q=80",
-    text: "We booked a corporate retreat for 40 people. The team handled everything flawlessly. Our employees still talk about it months later. Highly recommend for team building.",
-    rating: 5, hike: "Corporate Retreat",
-  },
-];
-
+// Hardcoded: the partners table has 0 approved rows. Revisit when partners onboard.
 const PARTNERS = [
   { name: "Zuma Rock Resort", location: "Niger State", image: "https://images.unsplash.com/photo-1464822759023-fed622ff2c3b?w=400&q=80" },
   { name: "Yankari National Park", location: "Bauchi State", image: "https://images.unsplash.com/photo-1441974231531-c6227db76b6e?w=400&q=80" },
@@ -128,19 +137,29 @@ const PARTNERS = [
 ];
 
 // ─── Scroll Reveal Hook ───────────────────────────────────────────────────────
-function useScrollReveal() {
+/**
+ * `.reveal` is opacity:0 until `.visible` is added. The original ran
+ * querySelectorAll exactly once on mount, so any card that mounted later (i.e.
+ * every card fed by an async query) was never observed and stayed permanently
+ * invisible. Re-running when the data lands fixes that.
+ *
+ * Skeleton placeholders must NOT carry `.reveal`, or the skeletons themselves
+ * would be invisible.
+ */
+function useScrollReveal(deps: unknown[] = []) {
   useEffect(() => {
     const observer = new IntersectionObserver(
       (entries) => entries.forEach((e) => { if (e.isIntersecting) e.target.classList.add("visible"); }),
       { threshold: 0.12 }
     );
-    document.querySelectorAll(".reveal").forEach((el) => observer.observe(el));
+    document.querySelectorAll(".reveal:not(.visible)").forEach((el) => observer.observe(el));
     return () => observer.disconnect();
-  }, []);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, deps);
 }
 
 // ─── Components ───────────────────────────────────────────────────────────────
-function HikeCard({ hike, delay = 0 }: { hike: typeof FEATURED_HIKES[0]; delay?: number }) {
+function HikeCard({ hike, delay = 0 }: { hike: UiFeaturedHike; delay?: number }) {
   return (
     <div className={`hike-card reveal delay-${delay} group`} style={{ height: "380px" }}>
       <img src={hike.image} alt={hike.title} className="hike-card-img absolute inset-0" />
@@ -151,10 +170,12 @@ function HikeCard({ hike, delay = 0 }: { hike: typeof FEATURED_HIKES[0]; delay?:
           <span className="badge-pill badge-gold">{hike.difficulty}</span>
         </div>
         <div>
-          <div className="flex items-center gap-1.5 mb-2">
-            <MapPin className="w-3.5 h-3.5 text-[var(--gold)]" />
-            <span className="text-xs text-[oklch(0.75_0.01_240)]">{hike.location}</span>
-          </div>
+          {hike.location && (
+            <div className="flex items-center gap-1.5 mb-2">
+              <MapPin className="w-3.5 h-3.5 text-[var(--gold)]" />
+              <span className="text-xs text-[oklch(0.75_0.01_240)]">{hike.location}</span>
+            </div>
+          )}
           <h3 className="font-display text-xl font-bold text-white mb-3">{hike.title}</h3>
           <div className="flex items-center gap-2 flex-wrap mb-4">
             {hike.includes.slice(0, 3).map((inc) => (
@@ -179,7 +200,26 @@ function HikeCard({ hike, delay = 0 }: { hike: typeof FEATURED_HIKES[0]; delay?:
 // ─── Main Page ────────────────────────────────────────────────────────────────
 export default function Home() {
   const { isAuthenticated } = useAuth();
-  useScrollReveal();
+
+  const featuredQuery = trpc.hikes.featured.useQuery();
+  const testimonialsQuery = trpc.testimonials.list.useQuery();
+  const tiersQuery = trpc.membership.tiers.useQuery();
+
+  const featuredHikes = useMemo(
+    () => normaliseFeaturedHikes((featuredQuery.data ?? []) as unknown[]),
+    [featuredQuery.data]
+  );
+  const testimonials = useMemo(
+    () => normaliseTestimonials((testimonialsQuery.data ?? []) as unknown[]),
+    [testimonialsQuery.data]
+  );
+  const tiers = useMemo(
+    () => normaliseTiers((tiersQuery.data ?? []) as unknown[]),
+    [tiersQuery.data]
+  );
+
+  // Re-observe when async content lands, or those cards stay at opacity 0.
+  useScrollReveal([featuredHikes.length, testimonials.length, tiers.length]);
 
   return (
     <div className="min-h-screen bg-[var(--background)]">
@@ -261,6 +301,8 @@ export default function Home() {
       </section>
 
       {/* ── FEATURED HIKES ────────────────────────────────────────────────── */}
+      {/* Nothing to feature => the whole section is omitted. No placeholders. */}
+      {(featuredQuery.isLoading || featuredHikes.length > 0) && (
       <section className="py-24" id="hikes">
         <div className="container">
           <div className="flex items-end justify-between mb-14">
@@ -275,9 +317,14 @@ export default function Home() {
             </Link>
           </div>
           <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-6">
-            {FEATURED_HIKES.map((hike, i) => (
-              <HikeCard key={hike.id} hike={hike} delay={(i % 3) * 100} />
-            ))}
+            {featuredQuery.isLoading
+              ? [1, 2, 3].map((i) => (
+                  // No `.reveal` here - a skeleton must not start invisible.
+                  <div key={i} className="rounded-2xl bg-white/5 animate-pulse" style={{ height: "380px" }} />
+                ))
+              : featuredHikes.map((hike, i) => (
+                  <HikeCard key={hike.id} hike={hike} delay={(i % 3) * 100} />
+                ))}
           </div>
           <div className="text-center mt-10">
             <Link href="/hikes" className="btn-outline-gold">
@@ -286,6 +333,7 @@ export default function Home() {
           </div>
         </div>
       </section>
+      )}
 
       {/* ── BOOKING WINDOW BANNER ─────────────────────────────────────────── */}
       <section className="py-8 bg-gradient-to-r from-[oklch(0.15_0.03_75)] via-[oklch(0.12_0.02_240)] to-[oklch(0.15_0.03_75)] border-y border-[oklch(0.72_0.18_75/0.2)]">
@@ -371,7 +419,7 @@ export default function Home() {
               <div className="absolute -bottom-4 -left-4 glass rounded-2xl p-4 shadow-xl">
                 <div className="flex items-center gap-3">
                   <div className="flex -space-x-2">
-                    {["photo-1531123897727-8f129e1688ce", "photo-1507003211169-0a1dd7228f2d", "photo-1494790108755-2616b612b47c"].map((id) => (
+                    {["photo-1531123897727-8f129e1688ce", "photo-1507003211169-0a1dd7228f2d", "photo-1438761681033-6461ffad8d80"].map((id) => (
                       <img key={id} src={`https://images.unsplash.com/${id}?w=40&q=80`} alt="" className="w-8 h-8 rounded-full border-2 border-[var(--card)] object-cover" />
                     ))}
                   </div>
@@ -413,6 +461,9 @@ export default function Home() {
       </section>
 
       {/* ── MEMBERSHIP ────────────────────────────────────────────────────── */}
+      {/* Tiers and prices come from membership.tiers - the same server-authoritative
+          row MembershipPage charges against, so the two can never diverge. */}
+      {(tiersQuery.isLoading || tiers.length > 0) && (
       <section className="py-24" id="membership">
         <div className="container">
           <div className="text-center mb-16">
@@ -425,9 +476,12 @@ export default function Home() {
             </p>
           </div>
           <div className="grid md:grid-cols-2 gap-8 max-w-3xl mx-auto">
-            {MEMBERSHIP_TIERS.map((tier, i) => (
+            {tiersQuery.isLoading && [1, 2].map((i) => (
+              <div key={i} className="rounded-2xl bg-white/5 animate-pulse" style={{ height: "480px" }} />
+            ))}
+            {tiers.map((tier, i) => (
               <div
-                key={tier.name}
+                key={tier.id}
                 className={`reveal delay-${i * 200} rounded-2xl p-8 relative ${tier.popular ? "membership-vip" : "glass-card"}`}
               >
                 {tier.popular && (
@@ -464,6 +518,7 @@ export default function Home() {
           </div>
         </div>
       </section>
+      )}
 
       {/* ── MEDIA GALLERY ─────────────────────────────────────────────────── */}
       <section className="py-24 bg-[oklch(0.09_0.012_240)]">
@@ -514,6 +569,8 @@ export default function Home() {
       </section>
 
       {/* ── TESTIMONIALS ──────────────────────────────────────────────────── */}
+      {/* No testimonials => omit the section rather than invent quotes. */}
+      {(testimonialsQuery.isLoading || testimonials.length > 0) && (
       <section className="py-24">
         <div className="container">
           <div className="text-center mb-14">
@@ -521,8 +578,11 @@ export default function Home() {
             <h2 className="font-display text-4xl font-bold text-white reveal delay-100">What Our Members Say</h2>
           </div>
           <div className="grid md:grid-cols-3 gap-6">
-            {TESTIMONIALS.map((t, i) => (
-              <div key={t.name} className={`reveal delay-${i * 150} glass-card p-7`}>
+            {testimonialsQuery.isLoading && [1, 2, 3].map((i) => (
+              <div key={i} className="rounded-2xl bg-white/5 animate-pulse" style={{ height: "260px" }} />
+            ))}
+            {testimonials.map((t, i) => (
+              <div key={t.id} className={`reveal delay-${i * 150} glass-card p-7`}>
                 <div className="flex gap-1 mb-4">
                   {Array.from({ length: t.rating }).map((_, j) => (
                     <Star key={j} className="w-4 h-4 fill-[var(--gold)] text-[var(--gold)]" />
@@ -530,10 +590,17 @@ export default function Home() {
                 </div>
                 <p className="text-[oklch(0.72_0.02_240)] leading-relaxed mb-6 italic">"{t.text}"</p>
                 <div className="flex items-center gap-3">
-                  <img src={t.avatar} alt={t.name} className="w-10 h-10 rounded-full object-cover" />
+                  <img
+                    src={t.avatar}
+                    alt={t.name}
+                    className="w-10 h-10 rounded-full object-cover"
+                    // A dead avatarUrl in the DB must not leave a broken image
+                    // icon next to a customer quote.
+                    onError={(e) => { e.currentTarget.src = FALLBACK_AVATAR; }}
+                  />
                   <div>
                     <div className="font-semibold text-white text-sm">{t.name}</div>
-                    <div className="text-xs text-[oklch(0.55_0.02_240)]">{t.title}</div>
+                    {t.title && <div className="text-xs text-[oklch(0.55_0.02_240)]">{t.title}</div>}
                   </div>
                 </div>
               </div>
@@ -541,6 +608,7 @@ export default function Home() {
           </div>
         </div>
       </section>
+      )}
 
       {/* ── SAFETY ────────────────────────────────────────────────────────── */}
       <section className="py-20 bg-[oklch(0.09_0.012_240)]">

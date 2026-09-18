@@ -89,7 +89,7 @@ export default function Footer() {
               </li>
               <li className="flex items-center gap-3">
                 <Mail className="w-4 h-4 text-[var(--gold)] shrink-0" />
-                <a href="mailto:hello@hikekings.ng" className="text-sm text-[oklch(0.55_0.02_240)] hover:text-[var(--gold)] transition-colors">hello@hikekings.ng</a>
+                <a href="mailto:info@hikekingsandtours.com" className="text-sm text-[oklch(0.55_0.02_240)] hover:text-[var(--gold)] transition-colors">info@hikekingsandtours.com</a>
               </li>
             </ul>
             <div className="mt-6 p-4 rounded-xl bg-[oklch(0.72_0.18_75/0.08)] border border-[oklch(0.72_0.18_75/0.2)]">
