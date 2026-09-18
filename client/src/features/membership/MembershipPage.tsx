@@ -1,66 +1,53 @@
-import { useState } from "react";
-import { Link } from "wouter";
+import { useCallback, useEffect, useMemo, useRef, useState } from "react";
+import { toast } from "sonner";
 import { useAuth } from "@/_core/hooks/useAuth";
 import { getLoginUrl } from "@/const";
+import { trpc } from "@/lib/trpc";
 import {
-  Crown, CheckCircle, Star, Users, Zap, Shield, Gift, ArrowRight, Mountain
+  Crown, CheckCircle, Star, Mountain, AlertCircle, Loader2, Clock,
+  type LucideIcon,
 } from "lucide-react";
 import Navbar from "@/components/Navbar";
 import Footer from "@/components/Footer";
 
-const TIERS = [
-  {
-    id: "regular",
-    name: "Regular",
-    price: 100000,
-    period: "/year",
-    icon: Star,
-    color: "glass-card",
-    iconBg: "bg-[var(--stone)]",
-    iconColor: "text-[var(--gold)]",
-    popular: false,
-    description: "Perfect for weekend adventurers who want exclusive access and savings on every hike.",
-    perks: [
-      "50% discount on all Abuja tourist trips",
-      "Priority booking access for all hikes",
-      "Special members-only hike events",
-      "Community recognition badge on profile",
-      "Access to members-only chat channel",
-      "Monthly newsletter & upcoming events",
-      "Early access to new destinations",
-      "Member discount on merchandise (10%)",
-    ],
-    cta: "Get Regular Membership",
-  },
-  {
-    id: "vip",
-    name: "VIP",
-    price: 500000,
-    period: "/year",
-    icon: Crown,
-    color: "membership-vip",
-    iconBg: "bg-[var(--gold)]",
-    iconColor: "text-[oklch(0.08_0.01_240)]",
-    popular: true,
-    description: "The ultimate adventure lifestyle membership. Exclusive access, free trips, and premium perks.",
-    perks: [
-      "Free local trip to one tourist destination",
-      "Exclusive VIP-only hike events (monthly)",
-      "Access to all private & premium events",
-      "VIP gold badge on profile",
-      "Free merchandise welcome package (₦25,000 value)",
-      "Dedicated concierge support line",
-      "Priority emergency assistance",
-      "Bring 2 guests for free per event",
-      "20% discount on all merchandise",
-      "Free photography prints from events",
-      "VIP lounge access at events",
-      "Annual VIP gala invitation",
-    ],
-    cta: "Get VIP Membership",
-  },
-];
+/** `tier.icon` is a component, so it is keyed off tierKey rather than stored. */
+const TIER_ICONS: Record<string, LucideIcon> = { regular: Star, vip: Crown };
 
+interface UiTier {
+  id: number;
+  tierKey: string;
+  name: string;
+  price: number;
+  period: string;
+  description: string;
+  perks: string[];
+  popular: boolean;
+  cta: string;
+  icon: LucideIcon;
+}
+
+const normaliseTiers = (rows: unknown[]): UiTier[] =>
+  rows.map((raw) => {
+    const row = raw as Record<string, unknown>;
+    const tierKey = String(row.tierKey ?? "");
+    return {
+      id: Number(row.id),
+      tierKey,
+      name: String(row.name ?? "Membership"),
+      // price is a DECIMAL column — it arrives as the string "100000.00".
+      price: Number(row.price) || 0,
+      period: String(row.period ?? "/year"),
+      description: String(row.description ?? ""),
+      perks: Array.isArray(row.perks)
+        ? row.perks.filter((p): p is string => typeof p === "string")
+        : [],
+      popular: Boolean(row.popular),
+      cta: String(row.ctaLabel || `Get ${String(row.name ?? "")} Membership`),
+      icon: TIER_ICONS[tierKey] ?? Star,
+    };
+  });
+
+// Editorial copy, deliberately not tier data — it is not modelled in the DB.
 const COMPARISON = [
   { feature: "Hike Discounts", regular: "50% off Abuja trips", vip: "All trips included" },
   { feature: "Priority Booking", regular: true, vip: true },
@@ -98,11 +85,135 @@ const FAQS = [
   },
 ];
 
-export default function Membership() {
-  const { isAuthenticated, user } = useAuth();
-  const [openFaq, setOpenFaq] = useState<number | null>(null);
+const formatPrice = (p: number) => `₦${p.toLocaleString("en-NG")}`;
 
-  const formatPrice = (p: number) => `₦${p.toLocaleString("en-NG")}`;
+/** tRPC surfaces the server's TRPCError code at `error.data.code`. */
+const errorCode = (error: unknown): string | undefined =>
+  (error as { data?: { code?: string } } | null)?.data?.code;
+
+/**
+ * Codes that mean this reference is finished and will never settle. Only these
+ * justify discarding the reference from the URL.
+ *
+ * CONFLICT is deliberately absent: it means Paystack has the money but has not
+ * finalised the charge yet, so the reference is still live and the webhook is
+ * expected to settle it. UNAUTHORIZED is absent too - the session, not the
+ * payment, is the problem, and the reference is needed after signing back in.
+ */
+const TERMINAL_VERIFY_CODES = new Set([
+  "BAD_REQUEST",
+  "FORBIDDEN",
+  "NOT_FOUND",
+  "PRECONDITION_FAILED",
+]);
+
+/** How long to wait before the one permitted re-check of membership state. */
+const SETTLEMENT_RECHECK_MS = 5_000;
+
+export default function Membership() {
+  const { isAuthenticated, user, loading: authLoading } = useAuth();
+  const [openFaq, setOpenFaq] = useState<number | null>(null);
+  const [pendingTier, setPendingTier] = useState<string | null>(null);
+  const utils = trpc.useUtils();
+
+  // The reference Paystack redirected back with. Held in state rather than read
+  // from the URL at use time, so it survives being cleaned out of the address
+  // bar - and so it is NOT cleaned out until the mutation has actually settled.
+  const [returnReference, setReturnReference] = useState<string | null>(() =>
+    typeof window === "undefined"
+      ? null
+      : new URLSearchParams(window.location.search).get("reference")
+  );
+  const [settlementPending, setSettlementPending] = useState(false);
+
+  const clearReferenceFromUrl = useCallback(() => {
+    window.history.replaceState({}, "", window.location.pathname);
+    setReturnReference(null);
+  }, []);
+
+  const { data, isLoading, isError } = trpc.membership.tiers.useQuery();
+  const tiers = useMemo(() => normaliseTiers((data ?? []) as unknown[]), [data]);
+
+  const initiate = trpc.membership.initiate.useMutation({
+    onSuccess: (result: { authorizationUrl: string }) => {
+      // Paystack hosts the card form. The client never handles a card, an
+      // amount, or a payment status.
+      window.location.href = result.authorizationUrl;
+    },
+    onError: (error: { message?: string }) => {
+      setPendingTier(null);
+      toast.error(error?.message ?? "Could not start the payment. Please try again.");
+    },
+  });
+
+  const verify = trpc.membership.verify.useMutation({
+    onSuccess: (result: { membershipType: string }) => {
+      setSettlementPending(false);
+      toast.success(`Welcome to ${String(result.membershipType).toUpperCase()}!`, {
+        description: "Your membership is active. Member pricing applies across the site.",
+      });
+      utils.auth.me.invalidate();
+      clearReferenceFromUrl();
+    },
+    onError: (error: unknown) => {
+      const code = errorCode(error);
+      const message = (error as { message?: string } | null)?.message;
+
+      // CONFLICT is not a failure. The charge is real and still finalising at
+      // Paystack; the webhook settles it moments later. Telling this person
+      // their payment failed invites a second payment - real money lost.
+      if (code === "CONFLICT") {
+        setSettlementPending(true);
+        toast.info("Payment received - we're confirming it now.", {
+          description: "Your membership will activate shortly. There's no need to pay again.",
+        });
+        return;
+      }
+
+      setSettlementPending(false);
+      toast.error(message ?? "We could not verify that payment.");
+
+      // Only discard the reference once it can never settle.
+      if (code && TERMINAL_VERIFY_CODES.has(code)) clearReferenceFromUrl();
+    },
+  });
+
+  // ── Paystack return leg ────────────────────────────────────────────────
+  // Paystack redirects to /membership?reference=<ref>.
+  //
+  // The effect waits for auth to resolve and only fires when signed in. If the
+  // session did not survive the redirect, verify is never called and the
+  // reference stays in the URL, so signing in and coming back still works. The
+  // param is stripped by the mutation handlers, never before they settle.
+  const verifiedRef = useRef(false);
+  const verifyMutate = verify.mutate;
+  useEffect(() => {
+    if (verifiedRef.current) return;
+    if (!returnReference) return;
+    if (authLoading) return;       // auth.me still in flight - do not judge yet
+    if (!isAuthenticated) return;  // keep the reference; they can sign in and return
+    verifiedRef.current = true;    // StrictMode double-invokes effects in dev
+    verifyMutate({ reference: returnReference });
+  }, [verifyMutate, returnReference, authLoading, isAuthenticated]);
+
+  // One re-check after the webhook has had a moment to land, so a settled
+  // membership appears without a manual refresh. Exactly one - no polling.
+  useEffect(() => {
+    if (!settlementPending) return;
+    const timer = window.setTimeout(() => {
+      utils.auth.me.invalidate();
+    }, SETTLEMENT_RECHECK_MS);
+    return () => window.clearTimeout(timer);
+  }, [settlementPending, utils]);
+
+  const recheckSettlement = () => {
+    if (!returnReference || verify.isPending) return;
+    verifyMutate({ reference: returnReference });
+  };
+
+  const scrollToPricing = () => {
+    document.getElementById("pricing")?.scrollIntoView({ behavior: "smooth" });
+  };
 
   return (
     <div className="min-h-screen bg-[var(--background)]">
@@ -120,6 +231,42 @@ export default function Membership() {
           <p className="text-[oklch(0.62_0.02_240)] max-w-xl mx-auto text-lg">
             Unlock exclusive hikes, premium discounts, and a community of passionate adventurers. The more you invest, the more you experience.
           </p>
+          {verify.isPending && (
+            <div className="mt-6 inline-flex items-center gap-2 px-5 py-3 rounded-xl bg-[var(--muted)] border border-[var(--border)]">
+              <Loader2 className="w-4 h-4 animate-spin text-[var(--gold)]" />
+              <span className="text-sm font-semibold text-white">Confirming your payment…</span>
+            </div>
+          )}
+
+          {/* Returned from Paystack but the session did not survive the redirect.
+              The reference is still in the URL, so signing in completes it. */}
+          {!authLoading && !isAuthenticated && returnReference && (
+            <div className="mt-6 inline-flex flex-wrap items-center justify-center gap-3 px-5 py-3 rounded-xl bg-[var(--muted)] border border-[var(--border)]">
+              <Clock className="w-4 h-4 text-[var(--gold)] shrink-0" />
+              <span className="text-sm text-white">
+                Payment received. Sign in to activate your membership — we’ve kept your reference.
+              </span>
+              <a href={getLoginUrl()} className="btn-gold text-xs py-2 px-4">Sign In</a>
+            </div>
+          )}
+
+          {/* CONFLICT: the charge is real and still finalising at Paystack. This
+              is a neutral waiting state, never an error, and it must never
+              suggest paying again. */}
+          {settlementPending && !verify.isPending && (
+            <div className="mt-6 inline-flex flex-wrap items-center justify-center gap-3 px-5 py-3 rounded-xl bg-[oklch(0.72_0.18_75/0.08)] border border-[oklch(0.72_0.18_75/0.3)]">
+              <Clock className="w-4 h-4 text-[var(--gold)] shrink-0" />
+              <span className="text-sm text-white text-left">
+                Payment received — we’re confirming it now.
+                <span className="block text-xs text-[oklch(0.62_0.02_240)]">
+                  Your membership will activate shortly. Please don’t pay again.
+                </span>
+              </span>
+              <button onClick={recheckSettlement} className="btn-outline-gold text-xs py-2 px-4">
+                Check again
+              </button>
+            </div>
+          )}
           {isAuthenticated && user != null && user.membershipType !== "free" && (
             <div className="mt-6 inline-flex items-center gap-2 px-5 py-3 rounded-xl bg-[oklch(0.72_0.18_75/0.1)] border border-[oklch(0.72_0.18_75/0.3)]">
               <Crown className="w-5 h-5 text-[var(--gold)]" />
@@ -132,50 +279,89 @@ export default function Membership() {
       </section>
 
       {/* Pricing Cards */}
-      <section className="py-20">
+      <section className="py-20" id="pricing">
         <div className="container">
-          <div className="grid md:grid-cols-2 gap-8 max-w-4xl mx-auto">
-            {TIERS.map((tier) => (
-              <div key={tier.id} className={`rounded-3xl p-8 relative ${tier.color}`}>
-                {tier.popular && (
-                  <div className="absolute -top-4 left-1/2 -translate-x-1/2">
-                    <span className="badge-pill badge-gold px-5 py-2 text-sm">Most Exclusive</span>
+          {isLoading ? (
+            <div className="grid md:grid-cols-2 gap-8 max-w-4xl mx-auto">
+              {[1, 2].map((i) => (
+                <div key={i} className="rounded-3xl bg-white/5 animate-pulse" style={{ height: "620px" }} />
+              ))}
+            </div>
+          ) : isError ? (
+            <div className="max-w-4xl mx-auto text-center py-24 glass-card rounded-3xl">
+              <AlertCircle className="w-12 h-12 text-[var(--gold)] mx-auto mb-4" />
+              <h2 className="text-xl font-semibold text-white mb-2">Membership is temporarily unavailable</h2>
+              <p className="text-[oklch(0.55_0.02_240)]">Please try again shortly or contact Hike Kings & Tours for assistance.</p>
+            </div>
+          ) : tiers.length === 0 ? (
+            <div className="max-w-4xl mx-auto text-center py-24 glass-card rounded-3xl">
+              <Crown className="w-12 h-12 text-[oklch(0.35_0.02_240)] mx-auto mb-4" />
+              <h2 className="text-xl font-semibold text-white mb-2">No membership tiers on sale right now</h2>
+              <p className="text-[oklch(0.55_0.02_240)]">New tiers are being prepared. Please check back soon.</p>
+            </div>
+          ) : (
+            <div className="grid md:grid-cols-2 gap-8 max-w-4xl mx-auto">
+              {tiers.map((tier) => {
+                const Icon = tier.icon;
+                const isSubmitting = initiate.isPending && pendingTier === tier.tierKey;
+                return (
+                  <div key={tier.id} className={`rounded-3xl p-8 relative ${tier.popular ? "membership-vip" : "glass-card"}`}>
+                    {tier.popular && (
+                      <div className="absolute -top-4 left-1/2 -translate-x-1/2">
+                        <span className="badge-pill badge-gold px-5 py-2 text-sm">Most Exclusive</span>
+                      </div>
+                    )}
+                    <div className="flex items-center gap-4 mb-6">
+                      <div className={`w-12 h-12 rounded-2xl flex items-center justify-center ${tier.popular ? "bg-[var(--gold)]" : "bg-[var(--stone)]"}`}>
+                        <Icon className={`w-6 h-6 ${tier.popular ? "text-[oklch(0.08_0.01_240)]" : "text-[var(--gold)]"}`} />
+                      </div>
+                      <div>
+                        <h3 className="font-hero text-3xl tracking-widest text-white">{tier.name}</h3>
+                        <p className="text-xs text-[oklch(0.55_0.02_240)] uppercase tracking-wider">Membership</p>
+                      </div>
+                    </div>
+                    <div className="mb-4">
+                      <span className="font-hero text-5xl text-[var(--gold)]">{formatPrice(tier.price)}</span>
+                      <span className="text-[oklch(0.55_0.02_240)]">{tier.period}</span>
+                    </div>
+                    {tier.description && (
+                      <p className="text-sm text-[oklch(0.65_0.02_240)] mb-7 leading-relaxed">{tier.description}</p>
+                    )}
+                    {tier.perks.length > 0 && (
+                      <ul className="space-y-3 mb-8">
+                        {tier.perks.map((perk) => (
+                          <li key={perk} className="flex items-start gap-2.5">
+                            <CheckCircle className="w-4 h-4 text-[var(--gold)] mt-0.5 shrink-0" />
+                            <span className="text-sm text-[oklch(0.75_0.02_240)]">{perk}</span>
+                          </li>
+                        ))}
+                      </ul>
+                    )}
+                    {isAuthenticated ? (
+                      <button
+                        className={`w-full justify-center ${tier.popular ? "btn-gold" : "btn-outline-gold"}`}
+                        disabled={initiate.isPending}
+                        onClick={() => {
+                          setPendingTier(tier.tierKey);
+                          initiate.mutate({ tierKey: tier.tierKey });
+                        }}
+                      >
+                        {isSubmitting ? (
+                          <><Loader2 className="w-4 h-4 animate-spin" /> Redirecting…</>
+                        ) : (
+                          tier.cta
+                        )}
+                      </button>
+                    ) : (
+                      <a href={getLoginUrl()} className={`w-full justify-center flex items-center gap-2 ${tier.popular ? "btn-gold" : "btn-outline-gold"}`}>
+                        Sign In to Subscribe
+                      </a>
+                    )}
                   </div>
-                )}
-                <div className="flex items-center gap-4 mb-6">
-                  <div className={`w-12 h-12 rounded-2xl flex items-center justify-center ${tier.iconBg}`}>
-                    <tier.icon className={`w-6 h-6 ${tier.iconColor}`} />
-                  </div>
-                  <div>
-                    <h3 className="font-hero text-3xl tracking-widest text-white">{tier.name}</h3>
-                    <p className="text-xs text-[oklch(0.55_0.02_240)] uppercase tracking-wider">Membership</p>
-                  </div>
-                </div>
-                <div className="mb-4">
-                  <span className="font-hero text-5xl text-[var(--gold)]">{formatPrice(tier.price)}</span>
-                  <span className="text-[oklch(0.55_0.02_240)]">{tier.period}</span>
-                </div>
-                <p className="text-sm text-[oklch(0.65_0.02_240)] mb-7 leading-relaxed">{tier.description}</p>
-                <ul className="space-y-3 mb-8">
-                  {tier.perks.map((perk) => (
-                    <li key={perk} className="flex items-start gap-2.5">
-                      <CheckCircle className="w-4 h-4 text-[var(--gold)] mt-0.5 shrink-0" />
-                      <span className="text-sm text-[oklch(0.75_0.02_240)]">{perk}</span>
-                    </li>
-                  ))}
-                </ul>
-                {isAuthenticated ? (
-                  <button className={`w-full justify-center ${tier.popular ? "btn-gold" : "btn-outline-gold"}`}>
-                    {tier.cta}
-                  </button>
-                ) : (
-                  <a href={getLoginUrl()} className={`w-full justify-center flex items-center gap-2 ${tier.popular ? "btn-gold" : "btn-outline-gold"}`}>
-                    Sign In to Subscribe
-                  </a>
-                )}
-              </div>
-            ))}
-          </div>
+                );
+              })}
+            </div>
+          )}
         </div>
       </section>
 
@@ -224,7 +410,7 @@ export default function Membership() {
           </div>
           <div className="space-y-3">
             {FAQS.map((faq, i) => (
-              <div key={i} className="glass-card rounded-xl overflow-hidden">
+              <div key={faq.q} className="glass-card rounded-xl overflow-hidden">
                 <button
                   className="w-full flex items-center justify-between px-6 py-4 text-left"
                   onClick={() => setOpenFaq(openFaq === i ? null : i)}
@@ -250,7 +436,7 @@ export default function Membership() {
           <h2 className="font-display text-3xl font-bold text-white mb-4">Ready to Join the Adventure?</h2>
           <p className="text-[oklch(0.62_0.02_240)] mb-8 max-w-md mx-auto">Start your membership today and unlock a world of adventure, community, and unforgettable experiences.</p>
           {isAuthenticated ? (
-            <button className="btn-gold px-10 py-4">Activate Membership Now</button>
+            <button className="btn-gold px-10 py-4" onClick={scrollToPricing}>Activate Membership Now</button>
           ) : (
             <a href={getLoginUrl()} className="btn-gold px-10 py-4">Create Account & Subscribe</a>
           )}

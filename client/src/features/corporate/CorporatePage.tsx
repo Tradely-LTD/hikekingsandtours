@@ -1,9 +1,11 @@
 import { useState } from "react";
+import { toast } from "sonner";
 import { useAuth } from "@/_core/hooks/useAuth";
 import { getLoginUrl } from "@/const";
+import { trpc } from "@/lib/trpc";
 import {
   Building2, Users, CheckCircle, ArrowRight, Mountain, Calendar,
-  Shield, Star, Briefcase, Award, ChevronDown
+  Shield, Star, Briefcase, Award, ChevronDown, Loader2
 } from "lucide-react";
 import Navbar from "@/components/Navbar";
 import Footer from "@/components/Footer";
@@ -103,16 +105,56 @@ const FAQS = [
 export default function Corporate() {
   const { isAuthenticated } = useAuth();
   const [openFaq, setOpenFaq] = useState<number | null>(null);
+  // NOTE: there is no `date` key. The form renders no date input, and
+  // corporate.inquire does not accept a preferred date — keeping the field
+  // would silently discard whatever the user typed.
   const [formData, setFormData] = useState({
-    company: "", name: "", email: "", phone: "", groupSize: "", date: "", package: "", message: ""
+    company: "", name: "", email: "", phone: "", groupSize: "", package: "", message: ""
   });
   const [submitted, setSubmitted] = useState(false);
 
   const fmt = (n: number) => `₦${(n / 1000000).toFixed(1)}M`;
 
+  const inquire = trpc.corporate.inquire.useMutation({
+    onSuccess: () => {
+      setSubmitted(true);
+      toast.success("Request received. We'll be in touch within 24 hours.");
+    },
+    onError: (error: { message?: string }) =>
+      toast.error(error?.message ?? "Could not send your request. Please try again."),
+  });
+
   const handleSubmit = (e: React.FormEvent) => {
     e.preventDefault();
-    setSubmitted(true);
+
+    // Free text -> positive int. NaN would fail zod and lose the submission.
+    const parsedTeamSize = parseInt(formData.groupSize.replace(/\D/g, ""), 10);
+    const teamSize = Number.isFinite(parsedTeamSize) && parsedTeamSize > 0 ? parsedTeamSize : undefined;
+
+    // "custom" is not in the server enum ["basic","premium","enterprise"], and
+    // neither is "". Send undefined and keep the signal in the requirements.
+    const selected = formData.package;
+    const packageType =
+      selected === "basic" || selected === "premium" || selected === "enterprise"
+        ? selected
+        : undefined;
+
+    const requirements = [
+      selected === "custom" ? "Custom package requested." : "",
+      formData.message.trim(),
+    ].filter(Boolean).join(" ");
+
+    const phone = formData.phone.trim();
+
+    inquire.mutate({
+      companyName: formData.company.trim(),
+      contactName: formData.name.trim(),
+      contactEmail: formData.email.trim(),
+      ...(phone ? { contactPhone: phone } : {}),
+      ...(packageType ? { packageType } : {}),
+      ...(teamSize !== undefined ? { teamSize } : {}),
+      ...(requirements ? { requirements } : {}),
+    });
   };
 
   return (
@@ -329,8 +371,12 @@ export default function Corporate() {
                     <label className="text-xs font-semibold uppercase tracking-wider text-[oklch(0.55_0.02_240)] mb-2 block">Additional Requirements</label>
                     <textarea value={formData.message} onChange={(e) => setFormData(p => ({ ...p, message: e.target.value }))} rows={3} className="w-full px-4 py-3 rounded-xl bg-[var(--muted)] border border-[var(--border)] text-white text-sm focus:outline-none focus:border-[var(--gold)] transition-colors resize-none" placeholder="Tell us about your team goals, preferred dates, or any special requirements..." />
                   </div>
-                  <button type="submit" className="btn-gold w-full justify-center py-4">
-                    Submit Request <ArrowRight className="w-4 h-4" />
+                  <button type="submit" className="btn-gold w-full justify-center py-4" disabled={inquire.isPending}>
+                    {inquire.isPending ? (
+                      <><Loader2 className="w-4 h-4 animate-spin" /> Sending…</>
+                    ) : (
+                      <>Submit Request <ArrowRight className="w-4 h-4" /></>
+                    )}
                   </button>
                 </form>
               )}
