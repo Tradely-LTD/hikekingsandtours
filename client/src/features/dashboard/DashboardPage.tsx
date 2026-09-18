@@ -34,7 +34,7 @@ const PAST_HIKES_STATIC = [
 const LEADERBOARD = [
   { rank: 1, name: "Amaka O.", hikes: 24, points: 2400, avatar: "https://images.unsplash.com/photo-1531123897727-8f129e1688ce?w=60&q=80" },
   { rank: 2, name: "Emeka A.", hikes: 21, points: 2100, avatar: "https://images.unsplash.com/photo-1507003211169-0a1dd7228f2d?w=60&q=80" },
-  { rank: 3, name: "Fatima B.", hikes: 18, points: 1800, avatar: "https://images.unsplash.com/photo-1494790108755-2616b612b47c?w=60&q=80" },
+  { rank: 3, name: "Fatima B.", hikes: 18, points: 1800, avatar: "https://images.unsplash.com/photo-1438761681033-6461ffad8d80?w=60&q=80" },
   { rank: 4, name: "Chidi N.", hikes: 15, points: 1500, avatar: "https://images.unsplash.com/photo-1472099645785-5658abf4ff4e?w=60&q=80" },
   { rank: 5, name: "Ngozi K.", hikes: 12, points: 1200, avatar: "https://images.unsplash.com/photo-1438761681033-6461ffad8d80?w=60&q=80" },
 ];

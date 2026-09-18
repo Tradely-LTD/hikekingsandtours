@@ -106,6 +106,22 @@ const PRODUCTS: StoreProduct[] = [
 const CATEGORIES = ["all", "apparel", "accessories", "gear", "drinkware"];
 const DEMO_STORE_ENABLED = import.meta.env.VITE_STORE_DEMO_MODE === "true";
 
+/**
+ * Naira decimal string -> integer kobo.
+ *
+ * This is the ONE place the charge amount is converted, and it is deliberately
+ * the same expression `store.confirmPayment` uses to compute `expectedKobo`
+ * from `orders.totalAmount`. Because both sides parse the same server-produced
+ * decimal string with the same formula, it does not matter whether the server
+ * rounds per line item or on the order total - that decision is already baked
+ * into `totalAmount` before the browser ever sees it, so the kobo values cannot
+ * drift by one.
+ *
+ * If the server's rounding rule ever changes, nothing here needs to change.
+ */
+const nairaStringToKobo = (totalAmount: string): number =>
+  Math.round(Number(totalAmount) * 100);
+
 const asStringArray = (value: unknown, fallback: string[]) =>
   Array.isArray(value) && value.length > 0
     ? value.filter((item): item is string => typeof item === "string")
@@ -202,25 +218,59 @@ export default function Store() {
     }
     setIsProcessing(true);
     try {
+      // The client chooses products and quantities. It does NOT choose prices:
+      // `store.createOrder` reads unit prices back from the products table and
+      // computes the total itself, ignoring any name/price/totalAmount sent
+      // here. So none are sent.
       const items = cart.map((item) => ({
         productId: item.product.id,
-        name: item.product.name,
         qty: item.qty,
-        price: String(getPrice(item.product)),
         size: item.size,
         color: item.color,
       }));
-      const totalAmount = String(cartTotal);
-      const { orderRef } = await createOrder.mutateAsync({ items, totalAmount, deliveryAddress });
+      const { orderRef, totalAmount } = await createOrder.mutateAsync({ items, deliveryAddress });
+
+      // The amount charged comes from the server response and nowhere else.
+      // Deriving it from local cart state is what previously let a member pay
+      // 90% while confirmPayment expected 100%, stranding a real payment
+      // against an order that stayed unpaid.
+      const chargeKobo = nairaStringToKobo(totalAmount);
+      if (!Number.isSafeInteger(chargeKobo) || chargeKobo <= 0) {
+        toast.error("We could not price that order. Please try again or contact support.");
+        return;
+      }
+
+      // If the server priced the order differently from what the cart showed,
+      // say so before charging. The server value is the one being charged, so
+      // silently taking a different amount than was displayed is not an option.
+      const serverTotalNaira = chargeKobo / 100;
+      if (Math.abs(serverTotalNaira - cartTotal) >= 1) {
+        toast.warning(
+          `Order total is ${fmt(serverTotalNaira)} (the cart showed ${fmt(cartTotal)}). You will be charged ${fmt(serverTotalNaira)}.`
+        );
+      }
 
       const authUser = user as { email?: string };
       pay({
         email: authUser.email ?? "customer@hikekings.com",
-        amount: cartTotal * 100, // kobo
+        amount: chargeKobo, // kobo, server-authoritative
         ref: `ORDER-${orderRef}-${nanoid(6)}`,
         metadata: { orderRef },
         onSuccess: async (paymentRef) => {
-          await confirmPayment.mutateAsync({ orderRef, paymentRef });
+          // This runs long after handleCheckout's try/catch has returned, so it
+          // needs its own. confirmPayment can legitimately reject (amount
+          // mismatch, replayed reference, Paystack unreachable) and an
+          // unhandled rejection here would leave someone who has just paid
+          // looking at a screen that says nothing at all.
+          try {
+            await confirmPayment.mutateAsync({ orderRef, paymentRef });
+          } catch (error) {
+            const message = (error as { message?: string })?.message;
+            toast.error(
+              message ?? `We could not confirm order ${orderRef}. Please contact support with this reference.`
+            );
+            return;
+          }
           setCart([]);
           setCartOpen(false);
           setOrderSuccess(orderRef);
